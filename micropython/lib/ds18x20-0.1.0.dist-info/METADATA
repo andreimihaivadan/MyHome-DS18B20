@@ -1,0 +1,6 @@
+Metadata-Version: 2.1
+Name: ds18x20
+Version: 0.1.0
+Summary: DS18x20 temperature sensor driver.
+Author:
+License: MIT

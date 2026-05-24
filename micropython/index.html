@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transylvanian Elysium Nest</title>
+  <link rel="stylesheet" href="/main.css">
+</head>
+<body>
+  <h1>Transylvanian Elysium Nest</h1>
+
+  <div class="section" id="sensors"></div>
+  <div id="relays"></div>
+  <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
+  <div class="footer">
+    Serial: <span id="serial"></span> | IP: <span id="ip"></span>
+  </div>
+
+  <script>
+  async function load() {
+    const r = await fetch('/api/state');
+    const d = await r.json();
+    document.getElementById('serial').textContent = d.udid;
+    document.getElementById('ip').textContent = d.ip;
+
+    const sContainer = document.getElementById('sensors');
+    if (sContainer) {
+        sContainer.innerHTML = '<h2>Sensors</h2>';
+        if (d.sensors && d.sensors.ds_temps) {
+          d.sensors.ds_temps.forEach(sensor => {
+            const div = document.createElement('div');
+            div.style.fontSize = '1.2em';
+            div.style.margin = '10px 0';
+            div.innerHTML = `<strong>${sensor[2] || sensor[0]}:</strong> ${sensor[1]} &deg;C`;
+            sContainer.appendChild(div);
+          });
+        }
+    }
+
+    const container = document.getElementById('relays');
+    container.innerHTML = '';
+
+    const maxRelays = d.max_relays || 16;
+    const sorted = Object.keys(d.relays).filter(k => {
+        const n = parseInt(k.split('_')[1]);
+        return n <= maxRelays;
+    }).sort((a,b) => {
+      const na = parseInt(a.split('_')[1]);
+      const nb = parseInt(b.split('_')[1]);
+      return na - nb;
+    }).map(k => [k, d.relays[k]]);
+
+    let cur = '';
+    sorted.forEach(([k, state]) => {
+      const purpose = d.purposes[k] || 'Unknown';
+      if (purpose !== cur) {
+        cur = purpose;
+        const cat = document.createElement('div');
+        cat.className = 'category';
+        cat.textContent = purpose;
+        container.appendChild(cat);
+      }
+      const i = k.split('_')[1];
+      const b = document.createElement('button');
+      b.textContent = `Relay ${i}: ${state?'ON':'OFF'}`;
+      b.className = state ? 'on' : 'off';
+      b.onclick = () => fetch(`/api/relays/${k}/${state?'off':'on'}`, {method:'POST'}).then(load);
+      container.appendChild(b);
+    });
+  }
+  load(); setInterval(load, 3000);
+  </script>
+</body>
+</html>
