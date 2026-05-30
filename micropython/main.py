@@ -283,10 +283,9 @@ try:
                             "ssid": cfg.get("wifi_ssid", ""),
                             "mode": wifi_mode[0],
                             "sensors": sd,
-                            "target_temp": cfg.get("target_temp", 22.0),
-                            "temp_check_interval": cfg.get("temp_check_interval", 30),
-
-                        }
+}
+                        if wlan.isconnected():
+                            payload["rssi"] = wlan.status("rssi")
                         send_headers(conn, "application/json")
                         try: conn.send(json.dumps(payload).encode())
                         except: pass

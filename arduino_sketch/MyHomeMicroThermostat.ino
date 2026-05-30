@@ -83,9 +83,6 @@ void setupOnewire() {
     delete oneWire;
   }
 
-  if (ow_pin == 0 || ow_pin == 2 || ow_pin == 15) {
-    Serial.printf("WARNING: GPIO %d is a strapping pin. Your ESP8266 may fail to boot if this pin is held LOW/HIGH.\n", ow_pin);
-  }
 
   oneWire = new OneWire(ow_pin);
   sensors = new DallasTemperature(oneWire);
@@ -116,6 +113,9 @@ void handleApiState() {
   doc["udid"] = String(ESP.getChipId(), HEX);
   doc["ssid"] = wifi_ssid;
   doc["mode"] = (WiFi.getMode() == WIFI_AP) ? "AP" : "STA";
+  if (WiFi.status() == WL_CONNECTED) {
+    doc["rssi"] = WiFi.RSSI();
+  }
   doc["ow_pin"] = ow_pin;
   doc["sensors_config"] = sensors_config;
 

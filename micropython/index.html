@@ -11,16 +11,41 @@
 
   <div class="section" id="sensors"></div>
     <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
-  <div class="footer">
-    Serial: <span id="serial"></span> | IP: <span id="ip"></span>
+  <div class="section" id="device-info">
+    <h2>Device Info</h2>
+    <div style="margin: 5px 0;"><strong>Serial:</strong> <span id="serial">--</span></div>
+    <div style="margin: 5px 0;"><strong>IP:</strong> <span id="ip">--</span></div>
+    <div style="margin: 5px 0;"><strong>Mode:</strong> <span id="mode">--</span></div>
+    <div style="margin: 5px 0;"><strong>Firmware: v1.0 (MicroPython)</strong></div>
+  </div>
+
+  <div class="section" id="wifi-info">
+    <h2>Wi-Fi information</h2>
+    <div style="margin: 5px 0;"><strong>Signal strength:</strong> <span id="rssi_dbm">--</span> dBm</div>
+    <div style="margin: 5px 0;"><strong>Signal strength:</strong> <span id="rssi_human">--</span></div>
   </div>
 
   <script>
   async function load() {
     const r = await fetch('/api/state');
     const d = await r.json();
-    document.getElementById('serial').textContent = d.udid;
-    document.getElementById('ip').textContent = d.ip;
+    document.getElementById('serial').textContent = d.udid || '--';
+    document.getElementById('ip').textContent = d.ip || '--';
+    if (document.getElementById('mode')) document.getElementById('mode').textContent = d.mode || '--';
+
+    let rssi_dbm = '--';
+    let rssi_human = '--';
+    if (d.rssi !== undefined) {
+      rssi_dbm = d.rssi;
+      if (d.rssi > -50) rssi_human = 'Very strong';
+      else if (d.rssi > -60) rssi_human = 'Strong';
+      else if (d.rssi > -70) rssi_human = 'Ok';
+      else if (d.rssi > -80) rssi_human = 'Low';
+      else rssi_human = 'Very low';
+    }
+
+    if (document.getElementById('rssi_dbm')) document.getElementById('rssi_dbm').textContent = rssi_dbm;
+    if (document.getElementById('rssi_human')) document.getElementById('rssi_human').textContent = rssi_human;
 
     const sContainer = document.getElementById('sensors');
     if (sContainer) {

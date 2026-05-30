@@ -16,15 +16,40 @@ const char index_html[] PROGMEM = R"=====(
   <h1>Transylvanian Elysium Nest</h1>
   <div id="sensors"></div>
     <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
-  <div class="footer">
-    Serial: <span id="serial"></span> | IP: <span id="ip"></span>
+  <div class="section" id="device-info">
+    <h2>Device Info</h2>
+    <div style="margin: 5px 0;"><strong>Serial:</strong> <span id="serial">--</span></div>
+    <div style="margin: 5px 0;"><strong>IP:</strong> <span id="ip">--</span></div>
+    <div style="margin: 5px 0;"><strong>Mode:</strong> <span id="mode">--</span></div>
+    <div style="margin: 5px 0;"><strong>Firmware: v1.0 (Arduino)</strong></div>
+  </div>
+
+  <div class="section" id="wifi-info">
+    <h2>Wi-Fi information</h2>
+    <div style="margin: 5px 0;"><strong>Signal strength:</strong> <span id="rssi_dbm">--</span> dBm</div>
+    <div style="margin: 5px 0;"><strong>Signal strength:</strong> <span id="rssi_human">--</span></div>
   </div>
   <script>
   async function load() {
     const r = await fetch('/api/state');
     const d = await r.json();
-    document.getElementById('serial').textContent = d.udid;
-    document.getElementById('ip').textContent = d.ip;
+    document.getElementById('serial').textContent = d.udid || '--';
+    document.getElementById('ip').textContent = d.ip || '--';
+    if (document.getElementById('mode')) document.getElementById('mode').textContent = d.mode || '--';
+
+    let rssi_dbm = '--';
+    let rssi_human = '--';
+    if (d.rssi !== undefined) {
+      rssi_dbm = d.rssi;
+      if (d.rssi > -50) rssi_human = 'Very strong';
+      else if (d.rssi > -60) rssi_human = 'Strong';
+      else if (d.rssi > -70) rssi_human = 'Ok';
+      else if (d.rssi > -80) rssi_human = 'Low';
+      else rssi_human = 'Very low';
+    }
+
+    if (document.getElementById('rssi_dbm')) document.getElementById('rssi_dbm').textContent = rssi_dbm;
+    if (document.getElementById('rssi_human')) document.getElementById('rssi_human').textContent = rssi_human;
 
     const sContainer = document.getElementById('sensors');
     if (sContainer) {
@@ -169,11 +194,23 @@ const char config_html[] PROGMEM = R"=====(
 
 const char main_css[] PROGMEM = R"=====(
 body {
-  font-family: Arial, sans-serif;
-  margin: 0;
-  padding: 20px;
-  background-color: #f0f0f0;
-  color: #333;
+  background: repeating-linear-gradient(135deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(45deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(67.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(135deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(45deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(112.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(112.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(45deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(22.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(45deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(22.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(135deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(157.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(67.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              repeating-linear-gradient(67.5deg, hsla(264,0%,88%,0.03) 0px, hsla(264,0%,88%,0.03) 1px,transparent 1px, transparent 12px),
+              linear-gradient(90deg, rgb(26,169,210),rgb(57,59,205));
+  color: white;
 }
 h1 {
   color: #2c3e50;
