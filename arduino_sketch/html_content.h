@@ -15,8 +15,7 @@ const char index_html[] PROGMEM = R"=====(
 <body>
   <h1>Transylvanian Elysium Nest</h1>
   <div id="sensors"></div>
-  <div id="relays"></div>
-  <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
+    <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
   <div class="footer">
     Serial: <span id="serial"></span> | IP: <span id="ip"></span>
   </div>
@@ -41,35 +40,6 @@ const char index_html[] PROGMEM = R"=====(
         }
     }
 
-    const container = document.getElementById('relays');
-    container.innerHTML = '';
-    const maxRelays = d.max_relays || 16;
-    const sorted = Object.keys(d.relays).filter(k => {
-        const n = parseInt(k.split('_')[1]);
-        return n <= maxRelays;
-    }).sort((a,b) => {
-      const na = parseInt(a.split('_')[1]);
-      const nb = parseInt(b.split('_')[1]);
-      return na - nb;
-    }).map(k => [k, d.relays[k]]);
-
-    let cur = '';
-    sorted.forEach(([k, state]) => {
-      const purpose = d.purposes[k] || 'Unknown';
-      if (purpose !== cur) {
-        cur = purpose;
-        const cat = document.createElement('div');
-        cat.className = 'category';
-        cat.textContent = purpose;
-        container.appendChild(cat);
-      }
-      const i = k.split('_')[1];
-      const b = document.createElement('button');
-      b.textContent = `Relay ${i}: ${state?'ON':'OFF'}`;
-      b.className = state ? 'on' : 'off';
-      b.onclick = () => fetch(`/api/relays/${k}/${state?'off':'on'}`, {method:'POST'}).then(load);
-      container.appendChild(b);
-    });
   }
   load(); setInterval(load, 3000);
   </script>
@@ -113,21 +83,7 @@ const char config_html[] PROGMEM = R"=====(
     </div>
   </div>
 
-  <!-- 1. Relay Purposes -->
-  <div class="section">
-    <h2>Relay Configuration</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Relay</th>
-          <th>Purpose</th>
-          <th>Trigger</th>
-        </tr>
-      </thead>
-      <tbody id="relays_body"></tbody>
-    </table>
-    <button onclick="saveRelays()">Save All</button>
-  </div>
+
 
   <!-- 2. WiFi -->
   <div class="section">
@@ -142,19 +98,15 @@ const char config_html[] PROGMEM = R"=====(
     <h2>Device Info</h2>
     <pre id="info">Loading...</pre>
     <button onclick="reboot()">Reboot</button>
-    <button onclick="resetRelays()">All Relays OFF</button>
     <button onclick="factoryReset()">Factory Reset</button>
   </div>
 
   <div class="back"><a href="/">Back to Control</a></div>
 
   <script>
-    let currentMaxRelays = 16;
-
     async function load() {
       const r = await fetch('/api/state');
       const d = await r.json();
-      currentMaxRelays = d.max_relays || 16;
 
       const owEl = document.getElementById('ow_pin');
       if (owEl) owEl.value = d.ow_pin !== undefined ? d.ow_pin : 10;
@@ -175,26 +127,6 @@ const char config_html[] PROGMEM = R"=====(
         }
       }
 
-      // Purposes
-      const tbl = document.getElementById('relays_body');
-      if (tbl) {
-          tbl.innerHTML = '';
-          for (let i=1;i<=currentMaxRelays;i++) {
-            const k = 'relay_'+i;
-            const trig = (d.triggers && d.triggers[k]) ? d.triggers[k] : 'high';
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-              <td>Relay ${i}</td>
-              <td><input id="p${i}" value="${d.purposes[k]||''}" placeholder="e.g. Lights, Pump"></td>
-              <td>
-                <select id="t${i}">
-                  <option value="high" ${trig=='high'?'selected':''}>High (Norm)</option>
-                  <option value="low" ${trig=='low'?'selected':''}>Low (Inv)</option>
-                </select>
-              </td>`;
-            tbl.appendChild(tr);
-          }
-      }
 
       document.getElementById('ssid').value = d.ssid || '';
       document.getElementById('info').textContent =
@@ -217,22 +149,6 @@ const char config_html[] PROGMEM = R"=====(
       alert('Sensors config saved!');
     }
 
-    async function saveRelays() {
-      const p = {};
-      for (let i=1;i<=currentMaxRelays;i++) {
-        const pEl = document.getElementById('p'+i);
-        const tEl = document.getElementById('t'+i);
-        if (pEl && tEl) {
-          p['relay_'+i] = {
-            purpose: pEl.value.trim(),
-            trigger: tEl.value
-          };
-        }
-      }
-      await fetch('/api/relays/config', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-      alert('Saved!');
-    }
-
     async function saveWiFi() {
       const ssid = document.getElementById('ssid').value;
       const pass = document.getElementById('pass').value;
@@ -243,7 +159,6 @@ const char config_html[] PROGMEM = R"=====(
     }
 
     async function reboot() { if(confirm('Reboot?')) await fetch('/api/reboot',{method:'POST'}); }
-    async function resetRelays() { if(confirm('All OFF?')) await fetch('/api/reset_relays',{method:'POST'}).then(()=>location.href='/'); }
     async function factoryReset() { if(confirm('Factory reset?')) await fetch('/api/factory_reset',{method:'POST'}); }
 
     load();

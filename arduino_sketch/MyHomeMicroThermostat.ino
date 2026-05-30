@@ -8,98 +8,75 @@
 
 ESP8266WebServer server(80);
 
-// Forward declarations
-void handleApiRelaysConfig();
-void handleApiRelayToggle();
-
-// Config
-struct RelayConfig {
-  bool state;
-  String purpose;
-  String trigger;
-};
-
-RelayConfig relays[16];
-int max_relays = 2;
+// Forward declarations / Global variables
 String wifi_ssid = "";
 String wifi_password = "";
 int ow_pin = 10;
-DynamicJsonDocument sensors_config(1024);
+JsonDocument sensors_config;
 
 OneWire* oneWire = nullptr;
 DallasTemperature* sensors = nullptr;
 
 const char* config_file = "/config.json";
 
+// =============================================================
+// Load configuration
+// =============================================================
 void loadConfig() {
+  Serial.println("Loading config from LittleFS...");
+
   if (LittleFS.exists(config_file)) {
     File file = LittleFS.open(config_file, "r");
     if (file) {
-      DynamicJsonDocument doc(2048);
+      JsonDocument doc;
       DeserializationError error = deserializeJson(doc, file);
       if (!error) {
         wifi_ssid = doc["wifi_ssid"].as<String>();
         wifi_password = doc["wifi_password"].as<String>();
-        max_relays = doc["max_relays"] | 2;
         ow_pin = doc["ow_pin"] | 10;
 
         if (doc.containsKey("sensors_config")) {
-          sensors_config = doc["sensors_config"];
+          sensors_config.set(doc["sensors_config"]);
         } else {
           sensors_config.to<JsonObject>();
         }
-
-        JsonObject rels = doc["relays"].as<JsonObject>();
-        for (JsonPair kv : rels) {
-          String key = kv.key().c_str();
-          if (key.startsWith("relay_")) {
-            int idx = key.substring(6).toInt() - 1;
-            if (idx >= 0 && idx < 16) {
-              JsonObject rObj = kv.value().as<JsonObject>();
-              relays[idx].state = rObj["state"] | false;
-              relays[idx].purpose = rObj["purpose"].as<String>();
-              relays[idx].trigger = rObj["trigger"] | "high";
-            }
-          }
-        }
+        Serial.println("Config loaded successfully");
+      } else {
+        Serial.println("Failed to parse config.json");
       }
       file.close();
+    } else {
+      Serial.println("Failed to open config file");
     }
   } else {
-    // Default setup
-    for (int i=0; i<16; i++) {
-      relays[i].state = false;
-      relays[i].purpose = "";
-      relays[i].trigger = "high";
-    }
+    Serial.println("No config file found - using defaults");
     sensors_config.to<JsonObject>();
   }
 }
 
+// =============================================================
+// Save configuration
+// =============================================================
 void saveConfig() {
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc;
   doc["wifi_ssid"] = wifi_ssid;
   doc["wifi_password"] = wifi_password;
-  doc["max_relays"] = max_relays;
   doc["ow_pin"] = ow_pin;
   doc["sensors_config"] = sensors_config;
-
-  JsonObject rels = doc.createNestedObject("relays");
-  for (int i=0; i<16; i++) {
-    String key = "relay_" + String(i + 1);
-    JsonObject rObj = rels.createNestedObject(key);
-    rObj["state"] = relays[i].state;
-    rObj["purpose"] = relays[i].purpose;
-    rObj["trigger"] = relays[i].trigger;
-  }
 
   File file = LittleFS.open(config_file, "w");
   if (file) {
     serializeJson(doc, file);
     file.close();
+    Serial.println("Config saved successfully");
+  } else {
+    Serial.println("Failed to save config file");
   }
 }
 
+// =============================================================
+// Setup OneWire + DS18B20
+// =============================================================
 void setupOnewire() {
   if (sensors != nullptr) {
     delete sensors;
@@ -108,8 +85,12 @@ void setupOnewire() {
   oneWire = new OneWire(ow_pin);
   sensors = new DallasTemperature(oneWire);
   sensors->begin();
+  Serial.printf("OneWire initialized on pin %d\n", ow_pin);
 }
 
+// =============================================================
+// Web Handlers
+// =============================================================
 void handleRoot() {
   server.send(200, "text/html", index_html);
 }
@@ -123,49 +104,39 @@ void handleCss() {
 }
 
 void handleApiState() {
-  DynamicJsonDocument doc(4096);
+  JsonDocument doc;
   doc["type"] = "controller";
   doc["ip"] = WiFi.localIP().toString();
   doc["udid"] = String(ESP.getChipId(), HEX);
   doc["ssid"] = wifi_ssid;
-  doc["mode"] = WiFi.getMode() == WIFI_AP ? "AP" : "Wi-Fi";
-  doc["max_relays"] = max_relays;
+  doc["mode"] = (WiFi.getMode() == WIFI_AP) ? "AP" : "STA";
   doc["ow_pin"] = ow_pin;
   doc["sensors_config"] = sensors_config;
-
-  JsonObject rel_copy = doc.createNestedObject("relays");
-  JsonObject pur_copy = doc.createNestedObject("purposes");
-  JsonObject trig_copy = doc.createNestedObject("triggers");
-
-  for (int i=0; i<16; i++) {
-    String key = "relay_" + String(i + 1);
-    rel_copy[key] = relays[i].state;
-    pur_copy[key] = relays[i].purpose;
-    trig_copy[key] = relays[i].trigger;
-  }
 
   JsonObject sd = doc.createNestedObject("sensors");
   JsonArray ds_temps = sd.createNestedArray("ds_temps");
 
   if (sensors != nullptr) {
     int count = sensors->getDeviceCount();
-    for (int i=0; i<count; i++) {
+    for (int i = 0; i < count; i++) {
       DeviceAddress addr;
       if (sensors->getAddress(addr, i)) {
         String rid = "";
-        for (uint8_t j=0; j<8; j++) {
+        for (uint8_t j = 0; j < 8; j++) {
           if (addr[j] < 16) rid += "0";
           rid += String(addr[j], HEX);
         }
         float t = sensors->getTempC(addr);
 
+        // === FIXED PART ===
         JsonArray sensorArr = ds_temps.createNestedArray();
         sensorArr.add(rid);
         sensorArr.add(t);
+
         if (sensors_config.containsKey(rid)) {
           sensorArr.add(sensors_config[rid].as<String>());
         } else {
-          sensorArr.add("");
+          sensorArr.add("");        // empty name/label
         }
       }
     }
@@ -182,7 +153,7 @@ void handleApiSensorsConfig() {
     return;
   }
 
-  DynamicJsonDocument doc(1024);
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, server.arg("plain"));
   if (error) {
     server.send(400, "text/plain", "Bad Request");
@@ -199,7 +170,7 @@ void handleApiSensorsConfig() {
   }
 
   if (doc.containsKey("sensors_config")) {
-    sensors_config = doc["sensors_config"];
+    sensors_config.set(doc["sensors_config"]);
   }
 
   saveConfig();
@@ -211,27 +182,13 @@ void handleApiSensorsConfig() {
   server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
-// ... Additional API handlers for relays, WiFi, reboot, etc ...
-
-void registerExtraRoutes() {
-  server.on("/api/relays/config", handleApiRelaysConfig);
-  // Using generic handler for relay toggle
-  server.onNotFound([]() {
-    if (server.uri().startsWith("/api/relays/")) {
-      handleApiRelayToggle();
-    } else {
-      server.send(404, "text/plain", "Not Found");
-    }
-  });
-}
-
-
 void handleApiWifi() {
   if (server.method() != HTTP_POST) {
     server.send(405, "text/plain", "Method Not Allowed");
     return;
   }
-  DynamicJsonDocument doc(1024);
+
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, server.arg("plain"));
   if (!error) {
     wifi_ssid = doc["ssid"].as<String>();
@@ -249,15 +206,6 @@ void handleApiReboot() {
   ESP.restart();
 }
 
-void handleApiResetRelays() {
-  for (int i = 0; i < 16; i++) {
-    relays[i].state = false;
-    setRelay(i, false);
-  }
-  saveConfig();
-  server.send(200, "application/json", "{\"status\":\"ok\"}");
-}
-
 void handleApiFactoryReset() {
   LittleFS.remove(config_file);
   server.send(200, "application/json", "{\"status\":\"ok\"}");
@@ -265,30 +213,68 @@ void handleApiFactoryReset() {
   ESP.restart();
 }
 
+void registerExtraRoutes() {
+  // Add future routes here
+}
+
+// =============================================================
+// SETUP
+// =============================================================
 void setup() {
   Serial.begin(115200);
-  LittleFS.begin();
+  delay(800);                                 // Important for ESP8266
+
+  Serial.println("\n\n=================================");
+  Serial.println("       T_NEST Controller");
+  Serial.println("=================================\n");
+
+  // LittleFS
+  if (!LittleFS.begin()) {
+    Serial.println("LittleFS mount failed. Formatting...");
+    if (LittleFS.format()) {
+      Serial.println("LittleFS formatted successfully.");
+      LittleFS.begin();
+    } else {
+      Serial.println("LittleFS format FAILED! System halted.");
+      while (true) delay(1000);
+    }
+  } else {
+    Serial.println("LittleFS mounted successfully");
+  }
+
   loadConfig();
   setupOnewire();
 
-  if (wifi_ssid != "") {
+  // WiFi Connection
+  if (wifi_ssid.length() > 0) {
+    Serial.println("Connecting to WiFi: " + wifi_ssid);
     WiFi.mode(WIFI_STA);
     WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+
     int retries = 0;
-    while (WiFi.status() != WL_CONNECTED && retries < 20) {
+    while (WiFi.status() != WL_CONNECTED && retries < 25) {
       delay(500);
       Serial.print(".");
       retries++;
     }
+    Serial.println();
   }
 
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection failed → Starting Access Point");
     WiFi.mode(WIFI_AP);
     String apName = "T_NEST_" + String(ESP.getChipId(), HEX);
     WiFi.softAP(apName.c_str(), "password123");
-    Serial.println("Started AP: " + apName);
+    Serial.println("AP Started: " + apName);
+    Serial.print("AP IP Address: ");
+    Serial.println(WiFi.softAPIP());
+  } else {
+    Serial.println("Connected to WiFi!");
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
   }
 
+  // Web Server Routes
   server.on("/", handleRoot);
   server.on("/index.html", handleRoot);
   server.on("/config.html", handleConfigHtml);
@@ -297,94 +283,41 @@ void setup() {
   server.on("/api/sensors/config", handleApiSensorsConfig);
   server.on("/api/wifi", handleApiWifi);
   server.on("/api/reboot", handleApiReboot);
-  server.on("/api/reset_relays", handleApiResetRelays);
   server.on("/api/factory_reset", handleApiFactoryReset);
+
   registerExtraRoutes();
 
-
-  for (int i=0; i<16; i++) {
-    if (relay_pins[i] != -1) {
-      pinMode(relay_pins[i], OUTPUT);
-      setRelay(i, relays[i].state);
-    }
-  }
-
   server.begin();
+  Serial.println("Web server started on port 80");
+  Serial.println("System ready!\n");
 }
 
+// =============================================================
+// LOOP
+// =============================================================
 unsigned long lastTempRequest = 0;
+
 void loop() {
   server.handleClient();
 
-  if (sensors != nullptr && millis() - lastTempRequest > 30000) {
+  if (sensors != nullptr && millis() - lastTempRequest > 5000) {
     sensors->requestTemperatures();
+
+    Serial.println("---- DS18B20 Sensors ----");
+    int count = sensors->getDeviceCount();
+    for (int i = 0; i < count; i++) {
+      DeviceAddress addr;
+      if (sensors->getAddress(addr, i)) {
+        String rid = "";
+        for (uint8_t j = 0; j < 8; j++) {
+          if (addr[j] < 16) rid += "0";
+          rid += String(addr[j], HEX);
+        }
+        float tempC = sensors->getTempC(addr);
+        Serial.printf("Sensor %d [%s] = %.2f °C\n", i, rid.c_str(), tempC);
+      }
+    }
+    Serial.println("------------------------");
     lastTempRequest = millis();
   }
-}
-
-
-// Default relay pins (modify according to actual hardware)
-int relay_pins[16] = {5, 4, 14, 12, 13, 15, 16, 2, -1, -1, -1, -1, -1, -1, -1, -1};
-
-void setRelay(int idx, bool state) {
-  if (idx < 0 || idx > 15 || relay_pins[idx] == -1) return;
-  bool trigger_high = (relays[idx].trigger == "high");
-  digitalWrite(relay_pins[idx], state == trigger_high ? HIGH : LOW);
-}
-
-void handleApiRelaysConfig() {
-  if (server.method() != HTTP_POST) {
-    server.send(405, "text/plain", "Method Not Allowed");
-    return;
-  }
-  DynamicJsonDocument doc(2048);
-  DeserializationError error = deserializeJson(doc, server.arg("plain"));
-  if (error) {
-    server.send(400, "text/plain", "Bad Request");
-    return;
-  }
-
-  for (JsonPair kv : doc.as<JsonObject>()) {
-    String key = kv.key().c_str();
-    if (key.startsWith("relay_")) {
-      int idx = key.substring(6).toInt() - 1;
-      if (idx >= 0 && idx < 16) {
-        JsonObject rObj = kv.value().as<JsonObject>();
-        if (rObj.containsKey("purpose")) relays[idx].purpose = rObj["purpose"].as<String>();
-        if (rObj.containsKey("trigger")) relays[idx].trigger = rObj["trigger"].as<String>();
-      }
-    }
-  }
-  saveConfig();
-  server.send(200, "application/json", "{\"status\":\"ok\"}");
-}
-
-void handleApiRelayToggle() {
-  if (server.method() != HTTP_POST) {
-    server.send(405, "text/plain", "Method Not Allowed");
-    return;
-  }
-  String uri = server.uri(); // /api/relays/relay_1/on
-  int p1 = uri.indexOf("/api/relays/");
-  if (p1 != -1) {
-    String rest = uri.substring(12);
-    int p2 = rest.indexOf("/");
-    if (p2 != -1) {
-      String key = rest.substring(0, p2);
-      String action = rest.substring(p2 + 1);
-
-      if (key.startsWith("relay_")) {
-        int idx = key.substring(6).toInt() - 1;
-        if (idx >= 0 && idx < 16) {
-          bool state = (action == "on");
-          relays[idx].state = state;
-          setRelay(idx, state);
-          saveConfig();
-          server.send(200, "application/json", "{\"status\":\"ok\"}");
-          return;
-        }
-      }
-    }
-  }
-  server.send(400, "text/plain", "Bad Request");
 }

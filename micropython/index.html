@@ -10,8 +10,7 @@
   <h1>Transylvanian Elysium Nest</h1>
 
   <div class="section" id="sensors"></div>
-  <div id="relays"></div>
-  <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
+    <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
   <div class="footer">
     Serial: <span id="serial"></span> | IP: <span id="ip"></span>
   </div>
@@ -37,36 +36,6 @@
         }
     }
 
-    const container = document.getElementById('relays');
-    container.innerHTML = '';
-
-    const maxRelays = d.max_relays || 16;
-    const sorted = Object.keys(d.relays).filter(k => {
-        const n = parseInt(k.split('_')[1]);
-        return n <= maxRelays;
-    }).sort((a,b) => {
-      const na = parseInt(a.split('_')[1]);
-      const nb = parseInt(b.split('_')[1]);
-      return na - nb;
-    }).map(k => [k, d.relays[k]]);
-
-    let cur = '';
-    sorted.forEach(([k, state]) => {
-      const purpose = d.purposes[k] || 'Unknown';
-      if (purpose !== cur) {
-        cur = purpose;
-        const cat = document.createElement('div');
-        cat.className = 'category';
-        cat.textContent = purpose;
-        container.appendChild(cat);
-      }
-      const i = k.split('_')[1];
-      const b = document.createElement('button');
-      b.textContent = `Relay ${i}: ${state?'ON':'OFF'}`;
-      b.className = state ? 'on' : 'off';
-      b.onclick = () => fetch(`/api/relays/${k}/${state?'off':'on'}`, {method:'POST'}).then(load);
-      container.appendChild(b);
-    });
   }
   load(); setInterval(load, 3000);
   </script>

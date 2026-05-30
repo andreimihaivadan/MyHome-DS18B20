@@ -1,4 +1,4 @@
-# MicroPython Pico W - 16 Relays + OLED + WiFi + System Menu
+# MicroPython Pico W - Sensors + WiFi
 # Architecture: MAIN thread = web server + sensors (90s) + buttons + logic
 # Display THREAD = OLED-only; wakes only when screen_dirty is set
 
@@ -22,42 +22,152 @@ def feed_wdt():
         pass
 
 
-
 # ------------ Locks for concurrency safety ------------
-i2c1_lock = _thread.allocate_lock()   # for OLED (i2c1)
-relay_state_lock = _thread.allocate_lock()
 sensor_lock = _thread.allocate_lock()
-screen_lock = _thread.allocate_lock()  # protects screen_dirty and snapshot
 
-# event-driven flag
-screen_dirty = True  # initial draw
 
 # --------------- Helpers ---------------
 
+# ---------------- Hardware ----------------
+# OneWire
+ow_pin = None
+ds = None
+ds_roms = []
 
-def draw_menu_screen():
-    oled.fill(0)
-    oled_print(0, "Menu", invert=True)
-    for i, item in enumerate(menu_items):
-        if i == menu_index:
-            oled_print(i + 1, "> " + item)
-        else:
-            oled_print(i + 1, "  " + item)
-    oled.show()
+def init_onewire(pin_num):
+    global ow_pin, ds, ds_roms
+    try:
+        ow_pin = Pin(pin_num)
+        ds = ds18x20.DS18X20(onewire.OneWire(ow_pin))
+        ds_roms = ds.scan()
+        print(f"OneWire on pin {pin_num}. Found DS18x20 devices: {ds_roms}")
+    except Exception as e:
+        print(f"OneWire init/scan error on pin {pin_num}:", e)
+        ds = None
+        ds_roms = []
 
 
 
 
+DEFAULT_CONFIG = {
+    "wifi_ssid": "",
+    "wifi_password": "",
+    "ow_pin": 10,
+    "sensors_config": {}
+}
 
-def draw_about():
-    uid = ubinascii.hexlify(machine.unique_id()).decode()
-    oled.fill(0)
-    oled_print(2, "UDID:", align="center")
-    oled_print(3, uid[:16], align="center")
-    oled_print(4, uid[16:], align="center")
+def save_config(cfg):
+    try:
+        with open(CONFIG_PATH, "w") as f:
+            f.write(json.dumps(cfg))
+            f.flush()
+            try: os.sync()
+            except: pass
+    except Exception as e:
+        print("Save error:", e)
+
+def load_config():
+    if CONFIG_PATH not in os.listdir():
+        save_config(DEFAULT_CONFIG)
+        return DEFAULT_CONFIG
+    try:
+        data = json.load(open(CONFIG_PATH))
+        if "wifi_ssid" not in data: data["wifi_ssid"] = ""
+        if "wifi_password" not in data: data["wifi_password"] = ""
+        if "ow_pin" not in data: data["ow_pin"] = 10
+        if "sensors_config" not in data: data["sensors_config"] = {}
+        return data
+    except Exception as e:
+        print("Config load error:", e)
+        return DEFAULT_CONFIG
+
+cfg = load_config()
+
+init_onewire(cfg.get("ow_pin", 10))
+
+# ---------- WiFi / AP ----------
+wlan = network.WLAN(network.STA_IF)
+ap = network.WLAN(network.AP_IF)
+AP_SSID = "T_NEST_" + ubinascii.hexlify(machine.unique_id()).decode()[:6]
+AP_PASSWORD = "password123"
+wifi_ip = "0.0.0.0"
+
+if cfg.get("wifi_ssid") and cfg.get("wifi_password"):
+    wlan.active(True)
+    wlan.connect(cfg["wifi_ssid"], cfg["wifi_password"])
+    for _ in range(20):
+        if wlan.isconnected():
+            print("Connected to ", cfg.get("wifi_ssid"))
+            break
+        time.sleep(0.5)
+        feed_wdt()
+if wlan.isconnected():
+    wifi_ip = wlan.ifconfig()[0]
+    wifi_mode = ("Wi-Fi", wifi_ip)
+else:
+    wlan.active(False)
+    ap.active(True)
+    ap.config(essid=AP_SSID, password=AP_PASSWORD)
+    wifi_ip = ap.ifconfig()[0]
+    wifi_mode = ("AP", wifi_ip)
+
+# ---------------- Sensor storage ----------------
+sensor_data = {"ds_temps": []}
+last_sensor_read = 0
+
+# ------------- UI state -------------
+selected = 0
+screen_mode = "main"   # 'main', 'menu', 'set_temp', 'sensors', 'netinfo', 'about'
+edit_start_time = 0
+menu_index = 0
+star_press_start = 0
+star_long_handled = False
+view_start_time = 0  # for temporary screens like sensors/about
+menu_start_time = 0  # for menu timeout
+FOOTER_TEXT = ""
+scroll_pos = 0
+scroll_delay = 0
+SCROLL_SPEED = 0.15
+
+# helper to mark screen dirty
+def mark_screen_dirty():
+    global screen_dirty
+    with screen_lock:
+        screen_dirty = True
+
+# helper for stable button reading (filters noise/OneWire pulses)
+def is_pressed_stable(btn):
+    if btn.value() == 0:
+        time.sleep(0.01)
+        if btn.value() == 0:
+            time.sleep(0.01)
+            if btn.value() == 0:
+                return True
+    return False
+
+# button state tracking for edge detection
+btn_states = {"up": False, "down": False, "hash": False}
+
+# ------------- Drawing functions (OLED-only, used by display thread) -------------
+
+def update_footer():
+    global FOOTER_TEXT, scroll_pos, scroll_delay
+    FOOTER_TEXT = f"{wifi_mode[0]}: {wifi_mode[1]}"
+    if len(FOOTER_TEXT) * 6 <= 128:
+        scroll_pos = 0
+        return
+    scroll_delay += 0.05
+    if scroll_delay >= SCROLL_SPEED:
+        scroll_delay = 0
+        scroll_pos = (scroll_pos + 1) % (len(FOOTER_TEXT) * 6 + 20)
+
+# minimal snapshot to avoid unnecessary drawing logic on display thread
+_last_draw_snapshot = {"selected": None, "prev": None, "next": None, "mode": None, "menu_idx": None, "footer": None}
+
+
+
 
 # display thread: only manipulates OLED and i2c1
-
 
 
 # ------------- Web server & main logic (runs on MAIN thread) -------------
@@ -97,7 +207,7 @@ DEBOUNCE_MS = 150
 last_press = time.ticks_ms()
 
 # sensor read interval
-SENSOR_INTERVAL = 30
+SENSOR_INTERVAL = cfg.get("temp_check_interval", 30)
 
 # helper: read sensors
 def read_sensors():
@@ -125,9 +235,6 @@ def read_sensors():
     with sensor_lock:
         sensor_data["ds_temps"] = ds_list
     print("Sensors data: ", sensor_data)
-
-# mark screen dirty helper that avoids grabbing many locks in caller
-
 
 # main loop: handles web connections, buttons, sensors, and logic
 last_sensor_read = time.time() - (SENSOR_INTERVAL + 1)
@@ -162,27 +269,24 @@ try:
                     elif path == "/main.css":
                         serve_file(conn, "main.css")
                     elif path == "/api/state":
-                        with relay_state_lock:
-                            rel_copy = relay_state.copy()
-                            pur_copy = relay_purposes.copy()
-                            trig_copy = {k: cfg["relays"][k].get("trigger", "high") for k in cfg["relays"]}
                         with sensor_lock:
                             sd = sensor_data.copy()
 
-                        therm_on = rel_copy.get("relay_1", False)
+
                         payload = {
-                            "type": "thermostat",
-                            "relays": rel_copy,
-                            "purposes": pur_copy,
-                            "triggers": trig_copy,
+                            "type": "sensor_node",
+
+
+
                             "ip": wifi_ip,
                             "udid": ubinascii.hexlify(machine.unique_id()).decode(),
                             "ssid": cfg.get("wifi_ssid", ""),
                             "mode": wifi_mode[0],
                             "sensors": sd,
-                                                        "temp_check_interval": cfg.get("temp_check_interval", 30),
-                            "max_relays": cfg.get("max_relays", 2),
-                                                        }
+                            "target_temp": cfg.get("target_temp", 22.0),
+                            "temp_check_interval": cfg.get("temp_check_interval", 30),
+
+                        }
                         send_headers(conn, "application/json")
                         try: conn.send(json.dumps(payload).encode())
                         except: pass
@@ -192,9 +296,8 @@ try:
                             data = json.loads(payload)
                             ssid = data.get("ssid", "").strip()
                             pwd = data.get("password", "").strip()
-                            with relay_state_lock:
-                                cfg["wifi_ssid"] = ssid
-                                cfg["wifi_password"] = pwd
+                            cfg["wifi_ssid"] = ssid
+                            cfg["wifi_password"] = pwd
                             save_config(cfg)
                             send_headers(conn, "application/json")
                             try: conn.send(b'{"status":"saved"}')
@@ -203,49 +306,6 @@ try:
                             print("WiFi save error:", e)
                             try: conn.send(b"HTTP/1.1 500\r\n\r\n")
                             except: pass
-                    elif path == "/api/reboot" and method == "POST":
-                        send_headers(conn, "application/json")
-                        try: conn.send(b'{"status":"rebooting"}')
-                        except: pass
-                        time.sleep(1)
-                        machine.reset()
-                    elif path == "/api/factory_reset" and method == "POST":
-                        try: os.remove(CONFIG_PATH)
-                        except: pass
-                        send_headers(conn, "application/json")
-                        try: conn.send(b'{"status":"reset"}')
-                        except: pass
-                        time.sleep(1)
-                        machine.reset()
-                    elif path.startswith("/api/relays/relay_") and method == "POST":
-                        parts = path.split("/")
-                        if len(parts) >= 5 and parts[3] in relay_state and parts[4] in ("on", "off"):
-                            key = parts[3]
-                            state = parts[4] == "on"
-                            relay_idx = int(key.split("_")[1]) - 1
-                            with relay_state_lock:
-                                relay_state[key] = state
-                                cfg["relays"][key]["state"] = state
-                                # hardware write protected by i2c0_lock inside set_relay
-                                set_relay(relay_idx, state)
-                            save_config(cfg)
-                            send_headers(conn, "application/json")
-                            try: conn.send(json.dumps({"relay": key, "state": state}).encode())
-                            except: pass
-                        else:
-                            try: conn.send(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                            except: pass
-                    elif path == "/api/reset_relays" and method == "POST":
-                        with relay_state_lock:
-                            for k in relay_state:
-                                relay_state[k] = False
-                                cfg["relays"][k]["state"] = False
-                                relay_idx = int(k.split("_")[1]) - 1
-                                set_relay(relay_idx, False)
-                        save_config(cfg)
-                        send_headers(conn, "application/json")
-                        try: conn.send(b'{"status":"all_off"}')
-                        except: pass
                     elif path == "/api/sensors/config" and method == "POST":
                         try:
                             payload = req.split("\r\n\r\n", 1)[1]
@@ -275,68 +335,20 @@ try:
                             print("Sensors config save error:", e)
                             try: conn.send(b"HTTP/1.1 500\r\n\r\n")
                             except: pass
-                    elif path == "/api/relays/config" and method == "POST":
-                        try:
-                            payload = req.split("\r\n\r\n", 1)[1]
-                            data = json.loads(payload)
-                            with relay_state_lock:
-                                for k, v in data.items():
-                                    if k in cfg["relays"]:
-                                        if "purpose" in v:
-                                            cfg["relays"][k]["purpose"] = v["purpose"].strip()
-                                            relay_purposes[k] = v["purpose"].strip()
-                                        if "trigger" in v:
-                                            cfg["relays"][k]["trigger"] = v["trigger"]
-                                            set_relay(int(k.split("_")[1])-1, relay_state[k])
-                            save_config(cfg)
-                            send_headers(conn, "application/json")
-                            try: conn.send(b'{"status":"ok"}')
-                            except: pass
-                        except Exception as e:
-                            print("Relay config save error:", e)
-                            try: conn.send(b"HTTP/1.1 500\r\n\r\n")
-                            except: pass
-                    elif path == "/api/purposes" and method == "POST":
-                        try:
-                            payload = req.split("\r\n\r\n", 1)[1]
-                            new_purposes = json.loads(payload)
-                            with relay_state_lock:
-                                for k, purpose in new_purposes.items():
-                                    if k in cfg["relays"]:
-                                        cfg["relays"][k]["purpose"] = purpose.strip()
-                                        relay_purposes[k] = purpose.strip()
-                            save_config(cfg)
-                            send_headers(conn, "application/json")
-                            try: conn.send(b'{"status":"ok"}')
-                            except: pass
-                        except Exception as e:
-                            print("Purpose save error:", e)
-                            try: conn.send(b"HTTP/1.1 500\r\n\r\n")
-                            except: pass
-                    elif path == "/api/manual_relay" and method == "POST":
-                        try:
-                            payload = req.split("\r\n\r\n", 1)[1]
-                            data = json.loads(payload)
-                            # Expect {"relay": 1, "state": true}
-                            r_id = data.get("relay")
-                            r_state = data.get("state")
-                            if r_id in (1, 2) and isinstance(r_state, bool):
-                                k = f"relay_{r_id}"
-                                with relay_state_lock:
-                                    relay_state[k] = r_state
-                                    cfg["relays"][k]["state"] = r_state
-                                    set_relay(r_id - 1, r_state)
-                                save_config(cfg)
-                                send_headers(conn, "application/json")
-                                try: conn.send(b'{"status":"ok"}')
-                                except: pass
-                            else:
-                                try: conn.send(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-                                except: pass
-                        except Exception as e:
-                            print("Manual relay error:", e)
-                            try: conn.send(b"HTTP/1.1 500\r\n\r\n")
-                            except: pass
+                    elif path == "/api/reboot" and method == "POST":
+                        send_headers(conn, "application/json")
+                        try: conn.send(b'{"status":"rebooting"}')
+                        except: pass
+                        time.sleep(1)
+                        machine.reset()
+                    elif path == "/api/factory_reset" and method == "POST":
+                        try: os.remove(CONFIG_PATH)
+                        except: pass
+                        send_headers(conn, "application/json")
+                        try: conn.send(b'{"status":"reset"}')
+                        except: pass
+                        time.sleep(1)
+                        machine.reset()
                     else:
                         try: conn.send(b"HTTP/1.1 404 Not Found\r\n\r\n")
                         except: pass
@@ -348,13 +360,12 @@ try:
                 if conn: conn.close()
             except: pass
 
-        # 2) sensors & thermostat logic
+        # 2) sensors logic
         now_sec = time.time()
         check_int = 30
         if now_sec - last_sensor_read >= check_int:
             last_sensor_read = now_sec
             read_sensors()
-
 
         # always feed watchdog in main loop
         try: wdt.feed()
