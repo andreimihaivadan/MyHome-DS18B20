@@ -11,7 +11,7 @@ ESP8266WebServer server(80);
 // Forward declarations / Global variables
 String wifi_ssid = "";
 String wifi_password = "";
-int ow_pin = 10;
+int ow_pin = 4;
 JsonDocument sensors_config;
 
 OneWire* oneWire = nullptr;
@@ -33,7 +33,7 @@ void loadConfig() {
       if (!error) {
         wifi_ssid = doc["wifi_ssid"].as<String>();
         wifi_password = doc["wifi_password"].as<String>();
-        ow_pin = doc["ow_pin"] | 10;
+        ow_pin = doc["ow_pin"] | 4;
 
         if (doc.containsKey("sensors_config")) {
           sensors_config.set(doc["sensors_config"]);
@@ -82,9 +82,15 @@ void setupOnewire() {
     delete sensors;
     delete oneWire;
   }
+
+  if (ow_pin == 0 || ow_pin == 2 || ow_pin == 15) {
+    Serial.printf("WARNING: GPIO %d is a strapping pin. Your ESP8266 may fail to boot if this pin is held LOW/HIGH.\n", ow_pin);
+  }
+
   oneWire = new OneWire(ow_pin);
   sensors = new DallasTemperature(oneWire);
   sensors->begin();
+  sensors->setWaitForConversion(false); // Non-blocking to prevent WDT resets
   Serial.printf("OneWire initialized on pin %d\n", ow_pin);
 }
 
@@ -297,27 +303,40 @@ void setup() {
 // =============================================================
 unsigned long lastTempRequest = 0;
 
+bool conversionPending = false;
+unsigned long conversionStartTime = 0;
+
 void loop() {
   server.handleClient();
 
-  if (sensors != nullptr && millis() - lastTempRequest > 5000) {
-    sensors->requestTemperatures();
-
-    Serial.println("---- DS18B20 Sensors ----");
-    int count = sensors->getDeviceCount();
-    for (int i = 0; i < count; i++) {
-      DeviceAddress addr;
-      if (sensors->getAddress(addr, i)) {
-        String rid = "";
-        for (uint8_t j = 0; j < 8; j++) {
-          if (addr[j] < 16) rid += "0";
-          rid += String(addr[j], HEX);
-        }
-        float tempC = sensors->getTempC(addr);
-        Serial.printf("Sensor %d [%s] = %.2f °C\n", i, rid.c_str(), tempC);
-      }
+  if (sensors != nullptr) {
+    // 1. Request temperatures every 5 seconds
+    if (!conversionPending && millis() - lastTempRequest > 5000) {
+      sensors->requestTemperatures();
+      conversionPending = true;
+      conversionStartTime = millis();
+      lastTempRequest = millis();
     }
-    Serial.println("------------------------");
-    lastTempRequest = millis();
+
+    // 2. Read temperatures 750ms after requesting (non-blocking)
+    if (conversionPending && millis() - conversionStartTime > 750) {
+      conversionPending = false;
+      Serial.println("---- DS18B20 Sensors ----");
+      int count = sensors->getDeviceCount();
+      for (int i = 0; i < count; i++) {
+        DeviceAddress addr;
+        if (sensors->getAddress(addr, i)) {
+          String rid = "";
+          for (uint8_t j = 0; j < 8; j++) {
+            if (addr[j] < 16) rid += "0";
+            rid += String(addr[j], HEX);
+          }
+          float tempC = sensors->getTempC(addr);
+          Serial.printf("Sensor %d [%s] = %.2f °C\n", i, rid.c_str(), tempC);
+        }
+        yield(); // Feed WDT
+      }
+      Serial.println("------------------------");
+    }
   }
 }

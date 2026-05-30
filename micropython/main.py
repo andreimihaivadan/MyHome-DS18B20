@@ -52,7 +52,7 @@ def init_onewire(pin_num):
 DEFAULT_CONFIG = {
     "wifi_ssid": "",
     "wifi_password": "",
-    "ow_pin": 10,
+    "ow_pin": 4,
     "sensors_config": {}
 }
 
@@ -83,7 +83,7 @@ def load_config():
 
 cfg = load_config()
 
-init_onewire(cfg.get("ow_pin", 10))
+init_onewire(cfg.get("ow_pin", 4))
 
 # ---------- WiFi / AP ----------
 wlan = network.WLAN(network.STA_IF)

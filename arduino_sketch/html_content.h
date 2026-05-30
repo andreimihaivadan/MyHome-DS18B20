@@ -64,7 +64,7 @@ const char config_html[] PROGMEM = R"=====(
     <h2>Sensors Settings</h2>
     <div>
       <label>OneWire GPIO:</label>
-      <input type="number" id="ow_pin" placeholder="10">
+      <input type="number" id="ow_pin" placeholder="4">
     </div>
     <div style="margin-top: 10px;">
       <table style="width: 100%;">
@@ -109,7 +109,7 @@ const char config_html[] PROGMEM = R"=====(
       const d = await r.json();
 
       const owEl = document.getElementById('ow_pin');
-      if (owEl) owEl.value = d.ow_pin !== undefined ? d.ow_pin : 10;
+      if (owEl) owEl.value = d.ow_pin !== undefined ? d.ow_pin : 4;
 
       const stbl = document.getElementById('sensors_body');
       if (stbl) {
@@ -134,7 +134,7 @@ const char config_html[] PROGMEM = R"=====(
     }
 
     async function saveSensors() {
-      const ow_pin = parseInt(document.getElementById('ow_pin').value, 10);
+      const ow_pin = parseInt(document.getElementById('ow_pin').value, 10) || 4;
       const inputs = document.querySelectorAll('.sensor-scope-input');
       const sensors_config = {};
       inputs.forEach(inp => {
