@@ -4,6 +4,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <LittleFS.h>
+#include <ArduinoOTA.h>
 #include "html_content.h"
 
 ESP8266WebServer server(80);
@@ -295,6 +296,8 @@ void setup() {
 
   server.begin();
   Serial.println("Web server started on port 80");
+
+  ArduinoOTA.begin();
   Serial.println("System ready!\n");
 }
 
@@ -308,6 +311,7 @@ unsigned long conversionStartTime = 0;
 
 void loop() {
   server.handleClient();
+  ArduinoOTA.handle();
 
   if (sensors != nullptr) {
     // 1. Request temperatures every 5 seconds
