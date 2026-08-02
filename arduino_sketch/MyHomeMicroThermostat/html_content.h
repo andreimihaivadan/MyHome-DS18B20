@@ -15,7 +15,7 @@ const char index_html[] PROGMEM = R"=====(
 <body>
   <h1>Transylvanian Elysium Nest</h1>
   <div id="sensors"></div>
-    <div style="margin-top: 20px;"><a href="/config.html">Configure Device</a></div>
+    <div style="margin-top: 20px;"><button onclick="window.location.href='/config.html'">Configure Device</button></div>
   <div class="section" id="device-info">
     <h2>Device Info</h2>
     <div style="margin: 5px 0;"><strong>Serial:</strong> <span id="serial">--</span></div>
@@ -218,6 +218,7 @@ h1 {
 }
 .section {
   background: white;
+  color: #333;
   padding: 15px;
   border-radius: 8px;
   margin-bottom: 20px;
