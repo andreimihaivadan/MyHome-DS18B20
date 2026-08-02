@@ -160,8 +160,9 @@ void handleApiSensorsConfig() {
     return;
   }
 
+  String body = server.hasArg("plain") ? server.arg("plain") : server.arg(0);
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, server.arg("plain"));
+  DeserializationError error = deserializeJson(doc, body);
   if (error) {
     server.send(400, "text/plain", "Bad Request");
     return;
@@ -195,8 +196,9 @@ void handleApiWifi() {
     return;
   }
 
+  String body = server.hasArg("plain") ? server.arg("plain") : server.arg(0);
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, server.arg("plain"));
+  DeserializationError error = deserializeJson(doc, body);
   if (!error) {
     wifi_ssid = doc["ssid"].as<String>();
     wifi_password = doc["password"].as<String>();
@@ -256,7 +258,11 @@ void setup() {
   if (wifi_ssid.length() > 0) {
     Serial.println("Connecting to WiFi: " + wifi_ssid);
     WiFi.mode(WIFI_STA);
-    WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+    if (wifi_password.length() > 0 && wifi_password != "null") {
+      WiFi.begin(wifi_ssid.c_str(), wifi_password.c_str());
+    } else {
+      WiFi.begin(wifi_ssid.c_str());
+    }
 
     int retries = 0;
     while (WiFi.status() != WL_CONNECTED && retries < 25) {
